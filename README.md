@@ -143,6 +143,95 @@ An iOS port is on the roadmap. The networking and view-model layers are
 already platform-agnostic; only `ContentView.swift` would need UIKit
 equivalents.
 
+## Privacy & Security
+
+**A remote control should control your TV, not collect your personal data.**
+
+Whale TV Remote is a privacy-first, open-source macOS remote control designed around the principle of least privilege.
+
+### Privacy by design
+
+- No ads.
+- No analytics.
+- No telemetry.
+- No advertising identifiers.
+- No third-party SDKs.
+- No crash-reporting services.
+- No accounts or registration.
+- No OAuth or social login.
+- No location tracking.
+- No camera or microphone access.
+- No photo library or file access.
+- No screen recording.
+- No cloud servers required for remote control.
+
+### Permissions
+
+The application requests only local network access through `NSLocalNetworkUsageDescription` to discover and communicate with compatible televisions.
+
+### Comparison with the official Whale TV application
+
+Based on a reported static analysis of the official Android application (`com.zeasn.whalemeta`, v2.1.3):
+
+| Capability | Official Whale TV | Whale TV Remote |
+|---|---|---|
+| Permission declarations | 25 | Local network authorization only |
+| Precise location | Declared | None |
+| Approximate location | Declared | None |
+| Camera | Declared | None |
+| Microphone | Declared | None |
+| Photo library access | Declared | None |
+| Video library access | Declared | None |
+| Audio library access | Declared | None |
+| Broad shared storage access | Declared | None |
+| Screen capture | Present | None |
+| Biometric authentication | Declared | None |
+| Advertising ID | Declared | None |
+| Advertising attribution | Present | None |
+| Privacy Sandbox Topics | Declared | None |
+| Custom advertising audiences | Declared | None |
+| Install Referrer | Present | None |
+| Firebase Analytics | Present | None |
+| Firebase Crashlytics | Present | None |
+| Firebase Sessions | Present | None |
+| Firebase Installations | Present | None |
+| Facebook SDK | Present | None |
+| Facebook package visibility | Declared | None |
+| Google DataTransport | Present | None |
+| Google Sign-In | Present | None |
+| Credential Manager | Present | None |
+| Google ML Kit | Present | None |
+| OAuth integration | Present | None |
+| Play Store license verification | Present | None |
+| Anti-tampering framework | Pairip | None |
+| Global cleartext HTTP allowance | Reported | Local TV communication only |
+| Account required for remote control | Not verified | No |
+| Open-source implementation | No | Yes — MIT |
+
+### Network security
+
+The application communicates directly with compatible televisions using local network discovery and HTTP commands.
+
+No intermediary cloud infrastructure is required.
+
+Local HTTP communication is not encrypted. Users should operate the application on trusted local networks. The application does not control or modify the television's own internet communications or privacy practices.
+
+### Scope and limitations
+
+This comparison documents declared permissions, embedded SDKs, application configuration, and potential capabilities.
+
+It does not establish that every declared permission is granted, that every SDK is active, or that the official application transmits specific personal information.
+
+Android and iOS use different permission models. Permission counts are provided for transparency, not as a numerical measure of security.
+
+### Open-source transparency
+
+The source code is available under the MIT license for independent inspection, auditing, modification, and verification.
+
+No trust in a proprietary remote-control client is required.
+
+This is an independent project and is not affiliated with Whale TV or ZEASN.
+
 ## Credits
 
 Built by reverse-engineering the official Android app
