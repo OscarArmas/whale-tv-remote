@@ -1,5 +1,5 @@
 import SwiftUI
-import AppKit
+import AppKit // NSCursor for the trackpad hover hint
 
 /// Main window. Two big states:
 ///   - Not connected: discovery screen with device cards.
@@ -420,20 +420,16 @@ struct ContentView: View {
         .buttonStyle(.plain)
     }
 
+    /// Trackpad built entirely with SwiftUI gestures. Previous attempts wrapped
+    /// an NSView via NSViewRepresentable but SwiftUI's hit-testing swallowed the
+    /// events in several cases (overlays, first-mouse, focus). Using the native
+    /// SwiftUI DragGesture / tap gesture is both simpler and more reliable.
     private var trackpad: some View {
-        TrackpadView(
+        SwiftUITrackpad(
             onMove: { dx, dy in model.move(x: dx, y: dy) },
             onClick: { model.press(RemoteKeys.mouseLeft) }
         )
         .frame(height: 130)
-        .overlay(
-            // IMPORTANT: `allowsHitTesting(false)` so this label does NOT eat the
-            // mouseDown / mouseDragged events that must reach the NSView below.
-            Text("Trackpad · drag to move pointer, click to select")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .allowsHitTesting(false)
-        )
     }
 
     // MARK: - Shared icon button
@@ -476,79 +472,69 @@ struct PressFeedbackButtonStyle: ButtonStyle {
     }
 }
 
-/// Optional trackpad (TR_MOVE + left click) embedded inside SwiftUI via NSViewRepresentable.
-///
-/// Gotchas worth remembering:
-///   - The NSView must opt into first-mouse events; otherwise the first click
-///     on an unfocused window is swallowed by AppKit and we see nothing.
-///   - Any SwiftUI overlay on top of this must use `.allowsHitTesting(false)`,
-///     otherwise it eats `mouseDown` / `mouseDragged` and the pad goes silent.
-///   - A layer-backed NSView needs an `NSTrackingArea` for hover-type events,
-///     but for pure drag/click we only need the mouse* overrides below.
-private struct TrackpadView: NSViewRepresentable {
+/// SwiftUI-native trackpad: a rounded rectangle that reacts to drag + tap
+/// using SwiftUI gestures. Reports incremental deltas (not absolute translations)
+/// so it behaves like a real trackpad.
+private struct SwiftUITrackpad: View {
     var onMove: (Int, Int) -> Void
     var onClick: () -> Void
 
-    func makeNSView(context: Context) -> NSView {
-        let view = PadView()
-        view.onMove = onMove
-        view.onClick = onClick
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 12
-        view.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
-        view.layer?.borderColor = NSColor.separatorColor.cgColor
-        view.layer?.borderWidth = 1
-        return view
-    }
+    /// Last reported drag location, used to compute per-frame deltas.
+    /// Kept as @State so SwiftUI preserves it across gesture updates.
+    @State private var lastLocation: CGPoint? = nil
+    /// Whether the user moved during this gesture. If false on end, we treat
+    /// the interaction as a tap and emit onClick.
+    @State private var didDrag: Bool = false
+    @State private var isActive: Bool = false
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        // Keep the latest closures in case SwiftUI recreates them on state updates.
-        if let pad = nsView as? PadView {
-            pad.onMove = onMove
-            pad.onClick = onClick
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor)
+                    .opacity(isActive ? 0.9 : 0.6))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+
+            Text("Trackpad · drag to move, tap to click")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                // Don't absorb gestures — let them reach the ZStack's shape below.
+                .allowsHitTesting(false)
         }
-    }
-
-    final class PadView: NSView {
-        var onMove: ((Int, Int) -> Void)?
-        var onClick: (() -> Void)?
-        private var last: NSPoint?
-        private var dragOccurred = false
-
-        // Required so the first click on an inactive window still reaches us.
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        // Lets the view become key responder; harmless for a simple pad.
-        override var acceptsFirstResponder: Bool { true }
-        // Changes the cursor to a crosshair while hovering.
-        override func resetCursorRects() {
-            super.resetCursorRects()
-            addCursorRect(bounds, cursor: .crosshair)
-        }
-
-        override func mouseDown(with event: NSEvent) {
-            dragOccurred = false
-            last = convert(event.locationInWindow, from: nil)
-        }
-
-        override func mouseDragged(with event: NSEvent) {
-            let p = convert(event.locationInWindow, from: nil)
-            if let last {
-                // NSView y axis grows upward; invert so moving the finger down
-                // on the Mac moves the pointer down on the TV.
-                let dx = Int((p.x - last.x).rounded())
-                let dy = Int((last.y - p.y).rounded())
-                if dx != 0 || dy != 0 {
-                    dragOccurred = true
-                    onMove?(dx, dy)
+        // `.contentShape` makes the whole rectangle a hit area, including the
+        // transparent corners where the rounded shape doesn't paint.
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .onChanged { value in
+                    isActive = true
+                    if let last = lastLocation {
+                        let dx = Int((value.location.x - last.x).rounded())
+                        let dy = Int((value.location.y - last.y).rounded())
+                        if dx != 0 || dy != 0 {
+                            didDrag = true
+                            onMove(dx, dy)
+                        }
+                    }
+                    lastLocation = value.location
                 }
+                .onEnded { _ in
+                    // A press-release without movement counts as a click.
+                    if !didDrag {
+                        onClick()
+                    }
+                    lastLocation = nil
+                    didDrag = false
+                    isActive = false
+                }
+        )
+        // Hint: show the crosshair cursor while hovering the pad.
+        .onHover { hovering in
+            if hovering {
+                NSCursor.crosshair.push()
+            } else {
+                NSCursor.pop()
             }
-            last = p
-        }
-
-        override func mouseUp(with event: NSEvent) {
-            if !dragOccurred { onClick?() }
-            last = nil
-            dragOccurred = false
         }
     }
 }
