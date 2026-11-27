@@ -427,9 +427,12 @@ struct ContentView: View {
         )
         .frame(height: 130)
         .overlay(
-            Text("Trackpad · drag / click")
+            // IMPORTANT: `allowsHitTesting(false)` so this label does NOT eat the
+            // mouseDown / mouseDragged events that must reach the NSView below.
+            Text("Trackpad · drag to move pointer, click to select")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .allowsHitTesting(false)
         )
     }
 
@@ -473,7 +476,15 @@ struct PressFeedbackButtonStyle: ButtonStyle {
     }
 }
 
-/// Optional trackpad (TR_MOVE + left click).
+/// Optional trackpad (TR_MOVE + left click) embedded inside SwiftUI via NSViewRepresentable.
+///
+/// Gotchas worth remembering:
+///   - The NSView must opt into first-mouse events; otherwise the first click
+///     on an unfocused window is swallowed by AppKit and we see nothing.
+///   - Any SwiftUI overlay on top of this must use `.allowsHitTesting(false)`,
+///     otherwise it eats `mouseDown` / `mouseDragged` and the pad goes silent.
+///   - A layer-backed NSView needs an `NSTrackingArea` for hover-type events,
+///     but for pure drag/click we only need the mouse* overrides below.
 private struct TrackpadView: NSViewRepresentable {
     var onMove: (Int, Int) -> Void
     var onClick: () -> Void
@@ -489,7 +500,14 @@ private struct TrackpadView: NSViewRepresentable {
         view.layer?.borderWidth = 1
         return view
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // Keep the latest closures in case SwiftUI recreates them on state updates.
+        if let pad = nsView as? PadView {
+            pad.onMove = onMove
+            pad.onClick = onClick
+        }
+    }
 
     final class PadView: NSView {
         var onMove: ((Int, Int) -> Void)?
@@ -497,24 +515,36 @@ private struct TrackpadView: NSViewRepresentable {
         private var last: NSPoint?
         private var dragOccurred = false
 
-        override func mouseDragged(with event: NSEvent) {
-            let p = convert(event.locationInWindow, from: nil)
-            var didDrag = false
-            if let last {
-                let dx = Int((p.x - last.x).rounded())
-                let dy = Int((last.y - p.y).rounded())
-                if dx != 0 || dy != 0 {
-                    didDrag = true
-                    onMove?(dx, dy)
-                }
-            }
-            last = p
-            if didDrag { dragOccurred = true }
+        // Required so the first click on an inactive window still reaches us.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        // Lets the view become key responder; harmless for a simple pad.
+        override var acceptsFirstResponder: Bool { true }
+        // Changes the cursor to a crosshair while hovering.
+        override func resetCursorRects() {
+            super.resetCursorRects()
+            addCursorRect(bounds, cursor: .crosshair)
         }
+
         override func mouseDown(with event: NSEvent) {
             dragOccurred = false
             last = convert(event.locationInWindow, from: nil)
         }
+
+        override func mouseDragged(with event: NSEvent) {
+            let p = convert(event.locationInWindow, from: nil)
+            if let last {
+                // NSView y axis grows upward; invert so moving the finger down
+                // on the Mac moves the pointer down on the TV.
+                let dx = Int((p.x - last.x).rounded())
+                let dy = Int((last.y - p.y).rounded())
+                if dx != 0 || dy != 0 {
+                    dragOccurred = true
+                    onMove?(dx, dy)
+                }
+            }
+            last = p
+        }
+
         override func mouseUp(with event: NSEvent) {
             if !dragOccurred { onClick?() }
             last = nil
