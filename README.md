@@ -1,237 +1,54 @@
-# Whale TV Remote for Mac (and iPhone)
+# Whale TV Remote for macOS
 
-**Unofficial remote control app for Whale TV, Whale projectors and any
-Zeasn-based smart TV.** Control your TV from your Mac or iPhone over Wi-Fi:
-arrows, OK, Home, volume, mute, HDMI source, color buttons, text input and a
-virtual trackpad. No account, no cloud, no telemetry — everything happens
-on your local network.
+Use your Mac as a remote for a Whale TV or projector running compatible Zeasn firmware. The arrow pad controls the TV menus. You can also switch inputs, adjust the volume, move the pointer, or type into a focused search field using your Mac keyboard.
 
-> Looking for a "Whale TV app for Mac" because the official one only ships
-> for Android and iOS? This is exactly that: a tiny, native, open-source
-> replacement for the official Whale TV / Zeasn mobile remote.
-
-![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey)
-![Swift](https://img.shields.io/badge/Swift-5.9-orange)
-![License](https://img.shields.io/badge/license-MIT-blue)
-
-## Why this exists
-
-The official **Whale TV app** (by Zeasn) is only available on Android and
-iOS. If you own a Whale TV, Whale projector, or any Android TV powered by
-the ZEASN WhaleOS firmware, this project lets you drive it from macOS using
-the same protocol the official app uses — reverse-engineered from the
-Android APK and verified with live packet captures.
-
-## Compatibility
-
-Tested on:
-
-- **Whale TV / Whale projectors** running WhaleOS (Zeasn 1.x firmware)
-- Models with `Zeasn/1.0.5.13` in their UPnP `Server:` header
-
-Should also work on any TV that advertises a `MediaRenderer:1` service with
-Zeasn's `remoteControl` extension. It will NOT work on generic DLNA
-renderers (Chromecast, Roku, Sony Bravia, etc.) because the key-press
-payload is Zeasn-specific.
-
-## Features
-
-- 🔍 **Automatic discovery** via UPnP/SSDP — no need to type an IP.
-- ⬆️⬇️⬅️➡️ **Full D-pad + OK**.
-- 🏠 Back, Home, Settings (main menu), HDMI input, Power.
-- 🔊 Volume up/down and mute (real `RenderingControl#SetVolume`, not a
-  key simulation).
-- 🔴🟢🟡🔵 Color buttons for projector image adjustments.
-- ⌨️ **Text input**: type on your Mac, it goes straight into the TV's
-  focused field (YouTube search, Netflix login, etc.) with automatic
-  Enter.
-- 🖱️ Virtual **trackpad** with sensitivity and move-coalescing so the
-  cursor feels snappy over Wi-Fi.
-- 🌓 Native SwiftUI UI with light / dark mode.
-- 🔌 Keep-alive HTTP so consecutive presses reuse the TCP connection.
+<img src="docs/remote.png" width="320" alt="Whale Remote window with the direction pad, volume buttons, text field and trackpad toggle">
 
 ## Install
 
-1. Download the latest `WhaleRemote-<version>.dmg` from the
-   [Releases](../../releases) page.
-2. Open the DMG and drag **Whale Remote** into `/Applications`.
-3. The app is ad-hoc signed — the first time you launch it, right-click the
-   app and choose **Open** to bypass Gatekeeper.
-4. Click **Search TVs**, pick your TV, press keys.
-
-Requires **macOS 13 Ventura** or newer.
-
-## Build from source
-
-Only the Xcode Command Line Tools are needed (no full Xcode required for
-the macOS build):
+Requires macOS 13 or later and the Xcode Command Line Tools. If you haven't installed the tools, run `xcode-select --install` and wait for the installer to finish.
 
 ```sh
-xcode-select --install
-git clone https://github.com/<your-user>/whale-tv-remote.git
+git clone https://github.com/OscarArmas/whale-tv-remote.git
 cd whale-tv-remote
 ./build.sh
+open dist/
 ```
 
-The script produces an ad-hoc signed `.app` and a `.dmg` under `dist/`.
+Drag **Whale Remote.app** into Applications. The build also produces an ad-hoc signed DMG for Macs with the same processor architecture as the build machine.
 
-## How it works
+## Connect to your TV
 
-- **Discovery**: SSDP `M-SEARCH` on `239.255.255.250:1900` with
-  `ST: urn:schemas-upnp-org:device:MediaRenderer:1` and `ssdp:all`.
-- **Decoy port handling**: Whale TV publishes **two** MediaRenderer
-  entries with the same UDN. The one on port `1393` answers HTTP 200 to
-  every request and silently drops key commands. The real one lives on
-  a port that **rotates on every reboot** (observed `2026`, `1566`, …).
-  `SsdpClient` always respects the port SSDP announces and discards the
-  1393 decoy.
-- **Key presses** travel inside an AVTransport `Seek` request, with the
-  inner XML payload XML-escaped as the `Target` field:
+1. Turn on the TV and connect it and your Mac to the same local network.
+2. Open Whale Remote, allow local network access if macOS asks, and click **Search TVs**.
+3. Select the TV by name or IP address. The remote appears after the TV answers the first heartbeat.
 
-  ```xml
-  <?xml version="1.0" encoding="utf-8"?>
-  <root>
-    <action name="setKey" eventAction="TR_PRESS" keyCode="TR_KEY_UP"/>
-  </root>
-  ```
+To enter text, focus a field on the TV, type in the remote window, and press Return. The app sends the text followed by Enter. **Show trackpad** opens a pad you can drag to move the pointer or tap to click.
 
-- **Volume** uses the standard `RenderingControl#SetVolume`,
-  `Channel=Master`.
-- **Text input** uses the same wrapper but with
-  `action name="setString"` and the whole string as `keyCode`.
-- **Heartbeat**: every 10 s the same Seek wrapper is sent with
-  `setHeartbeat COMMAND_HEARTBEAT=<local-ip>`.
+## Compatibility
 
-Full details are inline-documented in `WhaleRemote/DlnaRemote.swift` and
-`WhaleRemote/SsdpClient.swift`.
-
-## Project layout
-
-| File | Purpose |
+| Device or firmware | Support |
 | --- | --- |
-| `WhaleRemote/WhaleRemoteApp.swift` | SwiftUI app entry point |
-| `WhaleRemote/ContentView.swift` | UI: discovery + remote pad + trackpad |
-| `WhaleRemote/RemoteViewModel.swift` | Observable glue, heartbeat, in-flight counter |
-| `WhaleRemote/SsdpClient.swift` | SSDP discovery + descriptor parsing |
-| `WhaleRemote/DlnaRemote.swift` | SOAP calls for AVTransport + RenderingControl |
-| `WhaleRemote/UpnpHttp.swift` | URLSession with HTTP/1.1 keep-alive |
-| `WhaleRemote/RemoteKeys.swift` | `TR_KEY_*` constants |
-| `WhaleRemote/AppVersion.swift` | Version string in the footer |
-| `build.sh` | swiftc + hdiutil pipeline that produces the DMG |
+| WhaleOS renderer advertising `Zeasn/1.0.5.13` | Firmware identified in the project's original device tests. Navigation and volume use different services. |
+| Other Whale TV or projector firmware | Model coverage is unverified. Navigation needs the Zeasn remote-control extension. Volume and mute need UPnP RenderingControl. |
+| Generic DLNA renderers, Chromecast and Roku | Unsupported. Advertising a media renderer alone does not establish compatibility. |
 
-## FAQ
+## Troubleshooting
 
-**Does it need the internet?**
-No. Everything is LAN-only. Works on Wi-Fi networks with no outbound
-connectivity.
+- **The list is empty.** Check local network access for Whale Remote in System Settings if your macOS version lists it. Guest Wi-Fi can isolate devices even when they share a network name. If a VPN is active, check whether it allows local traffic, then search again.
+- **The TV stopped responding after a restart.** Run **Search TVs** again. Observed firmware changes its control port on reboot and also advertises a second endpoint on port 1393 that accepts requests but ignores key presses. Whale Remote skips that endpoint.
+- **Navigation works but volume fails.** The device must advertise a RenderingControl endpoint and return its current volume or mute state. The remote displays an error if that exchange fails.
 
-**Does it need a Whale TV account?**
-No. Zero accounts, zero sign-in, zero telemetry.
+## Protocol and privacy
 
-**Why does my TV not show up?**
-Mac and TV must be on the same Wi-Fi SSID / subnet. Some mesh networks
-isolate clients; disable "client isolation" on the AP. Hit **Search TVs**
-twice if nothing appears on the first try (UDP SSDP can drop packets).
+Discovery uses SSDP multicast. The app reads the UPnP device descriptor and sends Zeasn commands inside the `Target` of an AVTransport `Seek` request. Volume and mute use the standard RenderingControl service. While connected, the app sends a heartbeat every ten seconds.
 
-**Will this control my `<other brand>` TV?**
-No. The payload is Whale / Zeasn specific. Generic DLNA, Chromecast,
-AirPlay, Android TV Remote v2, Roku, Sony Bravia etc. use different
-protocols.
+The app requires no account and includes no analytics. Commands and typed text travel over unencrypted HTTP, so use it on a trusted network. The footer reports the character count of submitted text.
 
-**Can I use this on iPhone / iPad?**
-An iOS port is on the roadmap. The networking and view-model layers are
-already platform-agnostic; only `ContentView.swift` would need UIKit
-equivalents.
+## Development
 
-## Privacy & Security
+Open `WhaleRemote.xcodeproj` in Xcode or use `./build.sh` with the Command Line Tools. Bundle versions live in [Info.plist](WhaleRemote/Info.plist). Run `Tests/run.sh` to exercise discovery, connection failures, command ordering and text handling with a simulated TV.
 
-**A remote control should control your TV, not collect your personal data.**
+[SsdpClient.swift](WhaleRemote/SsdpClient.swift) resolves device descriptors and service addresses. [DlnaRemote.swift](WhaleRemote/DlnaRemote.swift) builds SOAP requests. [RemoteViewModel.swift](WhaleRemote/RemoteViewModel.swift) owns the connection and the command queue.
 
-Whale TV Remote is a privacy-first, open-source macOS remote control designed around the principle of least privilege.
-
-### Privacy by design
-
-- No ads.
-- No analytics.
-- No telemetry.
-- No advertising identifiers.
-- No third-party SDKs.
-- No crash-reporting services.
-- No accounts or registration.
-- No OAuth or social login.
-- No location tracking.
-- No camera or microphone access.
-- No photo library or file access.
-- No screen recording.
-- No cloud servers required for remote control.
-
-### Permissions
-
-The application requests only local network access through `NSLocalNetworkUsageDescription` to discover and communicate with compatible televisions.
-
-### Comparison with the official Whale TV application
-
-Based on a reported static analysis of the official Android application (`com.zeasn.whalemeta`, v2.1.3):
-
-| Capability | Official Whale TV | Whale TV Remote |
-|---|---|---|
-| Permission declarations | 25 | Local network authorization only |
-| Precise location | Declared | None |
-| Approximate location | Declared | None |
-| Camera | Declared | None |
-| Microphone | Declared | None |
-| Photo library access | Declared | None |
-| Video library access | Declared | None |
-| Audio library access | Declared | None |
-| Broad shared storage access | Declared | None |
-| Screen capture | Present | None |
-| Biometric authentication | Declared | None |
-| Advertising ID | Declared | None |
-| Advertising attribution | Present | None |
-| Privacy Sandbox Topics | Declared | None |
-| Custom advertising audiences | Declared | None |
-| Install Referrer | Present | None |
-| Firebase Analytics | Present | None |
-| Firebase Crashlytics | Present | None |
-| Firebase Sessions | Present | None |
-| Firebase Installations | Present | None |
-| Facebook SDK | Present | None |
-| Facebook package visibility | Declared | None |
-| Google DataTransport | Present | None |
-| Google Sign-In | Present | None |
-| Credential Manager | Present | None |
-| Google ML Kit | Present | None |
-| OAuth integration | Present | None |
-| Play Store license verification | Present | None |
-| Anti-tampering framework | Pairip | None |
-| Global cleartext HTTP allowance | Reported | Local TV communication only |
-| Account required for remote control | Not verified | No |
-| Open-source implementation | No | Yes — MIT |
-
-### Network security
-
-The application communicates directly with compatible televisions using local network discovery and HTTP commands.
-
-No intermediary cloud infrastructure is required.
-
-Local HTTP communication is not encrypted. Users should operate the application on trusted local networks. The application does not control or modify the television's own internet communications or privacy practices.
-
-### Scope and limitations
-
-This comparison documents declared permissions, embedded SDKs, application configuration, and potential capabilities.
-
-It does not establish that every declared permission is granted, that every SDK is active, or that the official application transmits specific personal information.
-
-Android and iOS use different permission models. Permission counts are provided for transparency, not as a numerical measure of security.
-
-### Open-source transparency
-
-The source code is available under the MIT license for independent inspection, auditing, modification, and verification.
-
-No trust in a proprietary remote-control client is required.
-
-This is an independent project and is not affiliated with Whale TV or ZEASN.
-
-## License
-
-MIT — see `LICENSE`.
+Independent project, unaffiliated with Whale TV or ZEASN. Distributed under the [MIT license](LICENSE).

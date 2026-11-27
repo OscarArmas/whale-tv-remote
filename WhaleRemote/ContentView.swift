@@ -5,7 +5,7 @@ import AppKit // NSCursor for the trackpad hover hint
 ///   - Not connected: discovery screen with device cards.
 ///   - Connected: the remote pad itself, with press feedback and an inline spinner.
 struct ContentView: View {
-    @StateObject private var model = RemoteViewModel()
+    @StateObject var model = RemoteViewModel()
     /// Text sent to the TV via `setString` + Enter.
     @State private var textToSend: String = ""
     @State private var showTrackpad: Bool = false
@@ -23,6 +23,9 @@ struct ContentView: View {
                     discoveryView
                         .transition(.opacity)
                 }
+                if let error = model.lastError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
                 Spacer(minLength: 0)
                 footer
             }
@@ -32,6 +35,7 @@ struct ContentView: View {
             // Thin progress strip at the top edge while any HTTP is in flight.
             loadingBar
         }
+        .onDisappear { model.disconnect() }
         .frame(minWidth: 380, minHeight: 640)
         .animation(.easeInOut(duration: 0.25), value: model.isConnected)
     }
@@ -73,7 +77,7 @@ struct ContentView: View {
                     .controlSize(.small)
                     .transition(.opacity)
             }
-            if model.isConnected {
+            if model.selected != nil {
                 Button(role: .destructive) {
                     model.disconnect()
                 } label: {
@@ -89,6 +93,8 @@ struct ContentView: View {
     }
 
     private var statusLine: String {
+        if model.connection == .connecting { return "Connecting…" }
+        if model.connection == .failed { return "Connection failed" }
         if model.isConnected {
             if let host = model.selected?.host {
                 return "Connected · \(host)"
@@ -178,12 +184,6 @@ struct ContentView: View {
                         deviceCard(device)
                     }
                 }
-            }
-            if let err = model.lastError {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
             }
         }
     }

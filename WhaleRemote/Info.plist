@@ -16,6 +16,8 @@
 	<string>1.9.4</string>
 	<key>CFBundleVersion</key>
 	<string>14</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>

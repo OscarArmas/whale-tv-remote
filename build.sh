@@ -7,8 +7,7 @@ SRC="$ROOT/WhaleRemote"
 BUILD="$ROOT/build"
 DIST="$ROOT/dist"
 APP="$DIST/Whale Remote.app"
-VERSION="1.9.4"
-BUILD_NUM="14"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$SRC/Info.plist")"
 DMG="$DIST/WhaleRemote-${VERSION}.dmg"
 ARCH="$(uname -m)"
 SDK="$(xcrun --sdk macosx --show-sdk-path)"
@@ -35,45 +34,11 @@ cp "$BUILD/WhaleRemote.bin" "$APP/Contents/MacOS/Whale Remote"
 chmod +x "$APP/Contents/MacOS/Whale Remote"
 echo -n "APPL????" > "$APP/Contents/PkgInfo"
 
-cat > "$APP/Contents/Info.plist" << PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleExecutable</key>
-	<string>Whale Remote</string>
-	<key>CFBundleIdentifier</key>
-	<string>com.local.WhaleRemote</string>
-	<key>CFBundleName</key>
-	<string>Whale Remote</string>
-	<key>CFBundleDisplayName</key>
-	<string>Whale Remote</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>${VERSION}</string>
-	<key>CFBundleVersion</key>
-	<string>${BUILD_NUM}</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Whale Remote looks for the TV on your Wi-Fi to send remote-control key presses.</string>
-</dict>
-</plist>
-PLIST
-
-codesign --force --deep --sign - "$APP" || true
+cp "$SRC/Info.plist" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleExecutable Whale Remote' "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.local.WhaleRemote' "$APP/Contents/Info.plist"
+codesign --force --sign - "$APP"
+codesign --verify --strict "$APP"
 
 STAGE="$BUILD/dmg"
 mkdir -p "$STAGE"

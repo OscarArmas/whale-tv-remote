@@ -13,7 +13,13 @@ actor DlnaRemote {
     let controlURL: URL
     let renderingURL: URL?
 
-    init(controlURL: URL, renderingURL: URL?) {
+    typealias Post = (URL, [String: String], Data) async throws -> UpnpHttp.Response
+    private let post: Post
+
+    init(controlURL: URL, renderingURL: URL?, post: @escaping Post = {
+        try await UpnpHttp.post(url: $0, headers: $1, body: $2)
+    }) {
+        self.post = post
         self.controlURL = controlURL
         self.renderingURL = renderingURL
     }
@@ -36,6 +42,27 @@ actor DlnaRemote {
         )
     }
 
+    // A rendering command reads and then writes the TV state. Keep ownership
+    // across both awaits so concurrent callers cannot overwrite each other.
+    private var renderingBusy = false
+    private var renderingWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private func beginRendering() async {
+        if renderingBusy {
+            await withCheckedContinuation { renderingWaiters.append($0) }
+        } else {
+            renderingBusy = true
+        }
+    }
+
+    private func endRendering() {
+        if renderingWaiters.isEmpty {
+            renderingBusy = false
+        } else {
+            renderingWaiters.removeFirst().resume()
+        }
+    }
+
     func volumeUp() async throws -> String {
         try await bumpVolume(+5)
     }
@@ -46,12 +73,16 @@ actor DlnaRemote {
 
     func toggleMute() async throws -> String {
         guard let renderingURL else { throw RemoteError.noControlURL }
-        let muted = (try await extractTag(soap(
+        await beginRendering()
+        defer { endRendering() }
+        let value = try await extractTag(soap(
             url: renderingURL,
             service: "urn:schemas-upnp-org:service:RenderingControl:1",
             action: "GetMute",
             params: "<InstanceID>0</InstanceID><Channel>Master</Channel>"
-        ), tag: "CurrentMute") ?? "0") != "0"
+        ), tag: "CurrentMute").lowercased()
+        guard ["0", "1", "false", "true"].contains(value) else { throw RemoteError.invalidResponse }
+        let muted = value == "1" || value == "true"
         let next = muted ? "0" : "1"
         _ = try await soap(
             url: renderingURL,
@@ -64,13 +95,15 @@ actor DlnaRemote {
 
     private func bumpVolume(_ delta: Int) async throws -> String {
         guard let renderingURL else { throw RemoteError.noControlURL }
+        await beginRendering()
+        defer { endRendering() }
         let raw = try await extractTag(soap(
             url: renderingURL,
             service: "urn:schemas-upnp-org:service:RenderingControl:1",
             action: "GetVolume",
             params: "<InstanceID>0</InstanceID><Channel>Master</Channel>"
-        ), tag: "CurrentVolume") ?? "0"
-        let current = Int(raw) ?? 0
+        ), tag: "CurrentVolume")
+        guard let current = Int(raw), (0...100).contains(current) else { throw RemoteError.invalidResponse }
         let next = min(100, max(0, current + delta))
         _ = try await soap(
             url: renderingURL,
@@ -87,7 +120,7 @@ actor DlnaRemote {
     }
 
     private func commandXML(name: String, keyCode: String) -> String {
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?><root><action name=\"\(name)\" eventAction=\"TR_PRESS\" keyCode=\"\(keyCode)\" /></root>"
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><root><action name=\"\(name)\" eventAction=\"TR_PRESS\" keyCode=\"\(escape(keyCode))\" /></root>"
     }
 
     /// Envelope identical to `DlnaController.kt` from the APK (params concatenated).
@@ -113,27 +146,29 @@ actor DlnaRemote {
             + "  </s:Body>\n"
             + "</s:Envelope>"
         let data = Data(envelope.utf8)
-        let response = try await UpnpHttp.post(
-            url: url,
-            headers: [
+        try Task.checkCancellation()
+        let response = try await post(
+            url, [
                 "Content-Type": "text/xml; charset=\"utf-8\"",
                 "SOAPAction": "\"\(service)#\(action)\"",
             ],
-            body: data
+            data
         )
         if !(200...299).contains(response.status) {
-            throw RemoteError.http(response.status, response.body)
+            throw RemoteError.http(response.status)
         }
         if response.body.localizedCaseInsensitiveContains("UPnPError") {
-            throw RemoteError.soapFault(response.body)
+            throw RemoteError.soapFault
         }
         return response.body
     }
 
-    private func extractTag(_ xml: String, tag: String) -> String? {
-        guard let start = xml.range(of: "<\(tag)>"),
-              let end = xml.range(of: "</\(tag)>", range: start.upperBound..<xml.endIndex) else { return nil }
-        return String(xml[start.upperBound..<end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    private func extractTag(_ xml: String, tag: String) throws -> String {
+        let doc = try XMLDocument(xmlString: xml, options: .nodeLoadExternalEntitiesNever)
+        guard let value = try doc.nodes(forXPath: "//*[local-name()='\(tag)']").first?.stringValue else {
+            throw RemoteError.invalidResponse
+        }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func escape(_ value: String) -> String {
@@ -147,16 +182,18 @@ actor DlnaRemote {
 }
 
 enum RemoteError: LocalizedError {
-    case http(Int, String)
-    case soapFault(String)
+    case http(Int)
+    case soapFault
+    case invalidResponse
     case noControlURL
     case badURL
     case socket(String)
 
     var errorDescription: String? {
         switch self {
-        case .http(let code, let log): return "HTTP \(code). \(log)"
-        case .soapFault(let log): return "SOAP Fault. \(log)"
+        case .http(let code): return "The TV returned HTTP \(code)."
+        case .soapFault: return "The TV rejected the command."
+        case .invalidResponse: return "The TV returned an unreadable control value."
         case .noControlURL: return "This device does not expose the required DLNA service"
         case .badURL: return "Invalid control URL"
         case .socket(let msg): return "Network: \(msg)"
