@@ -232,12 +232,6 @@ No trust in a proprietary remote-control client is required.
 
 This is an independent project and is not affiliated with Whale TV or ZEASN.
 
-## Credits
-
-Built by reverse-engineering the official Android app
-(`com.zeasn.whalemeta`) with `jadx` and verifying every protocol detail
-with live `mitmproxy` captures. Not affiliated with Zeasn or Whale TV.
-
 ## License
 
 MIT — see `LICENSE`.
