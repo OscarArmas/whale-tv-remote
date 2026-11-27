@@ -475,17 +475,29 @@ struct PressFeedbackButtonStyle: ButtonStyle {
 /// SwiftUI-native trackpad: a rounded rectangle that reacts to drag + tap
 /// using SwiftUI gestures. Reports incremental deltas (not absolute translations)
 /// so it behaves like a real trackpad.
+///
+/// Fractional pixels are accumulated so slow drags do not lose precision.
+/// A sensitivity multiplier amplifies the raw Mac-trackpad movement before
+/// sending it to the TV; without it you would need to drag a lot to move
+/// the cursor across the screen.
 private struct SwiftUITrackpad: View {
     var onMove: (Int, Int) -> Void
     var onClick: () -> Void
 
-    /// Last reported drag location, used to compute per-frame deltas.
-    /// Kept as @State so SwiftUI preserves it across gesture updates.
+    /// Last reported drag location (per-frame delta is `current - last`).
     @State private var lastLocation: CGPoint? = nil
-    /// Whether the user moved during this gesture. If false on end, we treat
-    /// the interaction as a tap and emit onClick.
+    /// Remainder < 1 px that didn't make it into the last int delta. Added
+    /// to the next frame so slow drags never get rounded away to zero.
+    @State private var remainderX: CGFloat = 0
+    @State private var remainderY: CGFloat = 0
+    /// True if the user moved during this gesture. If still false on release,
+    /// we treat the interaction as a tap and emit `onClick`.
     @State private var didDrag: Bool = false
     @State private var isActive: Bool = false
+
+    /// How many TV pixels per Mac trackpad pixel. 2.2 is a comfortable default
+    /// for a 1080p projector; bump up for 4K.
+    private let sensitivity: CGFloat = 2.2
 
     var body: some View {
         ZStack {
@@ -498,19 +510,22 @@ private struct SwiftUITrackpad: View {
             Text("Trackpad · drag to move, tap to click")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                // Don't absorb gestures — let them reach the ZStack's shape below.
                 .allowsHitTesting(false)
         }
-        // `.contentShape` makes the whole rectangle a hit area, including the
-        // transparent corners where the rounded shape doesn't paint.
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .local)
                 .onChanged { value in
                     isActive = true
                     if let last = lastLocation {
-                        let dx = Int((value.location.x - last.x).rounded())
-                        let dy = Int((value.location.y - last.y).rounded())
+                        // Raw per-frame delta in Mac points, amplified by sensitivity.
+                        let rawX = (value.location.x - last.x) * sensitivity + remainderX
+                        let rawY = (value.location.y - last.y) * sensitivity + remainderY
+                        // Quantize to int; keep the leftover for the next frame.
+                        let dx = Int(rawX.rounded(.towardZero))
+                        let dy = Int(rawY.rounded(.towardZero))
+                        remainderX = rawX - CGFloat(dx)
+                        remainderY = rawY - CGFloat(dy)
                         if dx != 0 || dy != 0 {
                             didDrag = true
                             onMove(dx, dy)
@@ -519,22 +534,16 @@ private struct SwiftUITrackpad: View {
                     lastLocation = value.location
                 }
                 .onEnded { _ in
-                    // A press-release without movement counts as a click.
-                    if !didDrag {
-                        onClick()
-                    }
+                    if !didDrag { onClick() }
                     lastLocation = nil
+                    remainderX = 0
+                    remainderY = 0
                     didDrag = false
                     isActive = false
                 }
         )
-        // Hint: show the crosshair cursor while hovering the pad.
         .onHover { hovering in
-            if hovering {
-                NSCursor.crosshair.push()
-            } else {
-                NSCursor.pop()
-            }
+            if hovering { NSCursor.crosshair.push() } else { NSCursor.pop() }
         }
     }
 }

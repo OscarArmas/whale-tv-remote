@@ -18,6 +18,11 @@ final class RemoteViewModel: ObservableObject {
     private var heartbeatTask: Task<Void, Never>?
     private var localIP = "0.0.0.0"
 
+    // Mouse-move coalescing state (see `move(x:y:)` below).
+    private var pendingMoveX: Int = 0
+    private var pendingMoveY: Int = 0
+    private var moveInFlight: Bool = false
+
     /// Starts counting one in-flight request (drives the UI spinner).
     private func startInFlight() { inFlight += 1 }
     private func endInFlight() { if inFlight > 0 { inFlight -= 1 } }
@@ -118,17 +123,48 @@ final class RemoteViewModel: ObservableObject {
         }
     }
 
+    /// Trackpad delta. Coalesces incoming moves so there is at most ONE HTTP
+    /// request to the TV in flight at a time.
+    ///
+    /// Rationale: SwiftUI's DragGesture fires at the display refresh rate
+    /// (~60 Hz). Sending one SOAP request per tick overwhelms the TV: the
+    /// queue grows and the on-screen cursor lags behind the finger by
+    /// hundreds of ms. Instead:
+    ///   1. First delta fires a request immediately.
+    ///   2. While it is flying, subsequent deltas are summed in
+    ///      `pendingMoveX/Y` instead of spawning new requests.
+    ///   3. When the request comes back, if any pending delta accumulated,
+    ///      a single request is sent with the sum, and the loop repeats.
+    ///
+    /// Net effect: mouse feedback is driven by the TV's real response time,
+    /// never by a growing backlog. On a healthy Wi-Fi this looks instant.
     func move(x: Int, y: Int) {
-        guard let remote else { return }
-        // The trackpad fires many events per second; skip the in-flight counter
-        // for these so the spinner does not blink constantly.
-        Task {
+        guard remote != nil else { return }
+        pendingMoveX += x
+        pendingMoveY += y
+        if !moveInFlight {
+            drainMoveQueue()
+        }
+    }
+
+    private func drainMoveQueue() {
+        guard let remote,
+              pendingMoveX != 0 || pendingMoveY != 0 else {
+            moveInFlight = false
+            return
+        }
+        let dx = pendingMoveX
+        let dy = pendingMoveY
+        pendingMoveX = 0
+        pendingMoveY = 0
+        moveInFlight = true
+        Task { [weak self] in
             do {
-                lastLog = try await remote.sendMouseMove(x: x, y: y)
-                lastError = nil
+                _ = try await remote.sendMouseMove(x: dx, y: dy)
             } catch {
-                lastError = error.localizedDescription
+                await MainActor.run { self?.lastError = error.localizedDescription }
             }
+            await MainActor.run { self?.drainMoveQueue() }
         }
     }
 

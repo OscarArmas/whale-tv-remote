@@ -4,8 +4,8 @@ import Foundation
 /// Bump this on every DMG so the user can tell which build is open — Finder
 /// sometimes keeps older copies in /Applications.
 enum AppVersion {
-    static let short = "1.9.3"
-    static let build = "13"
+    static let short = "1.9.4"
+    static let build = "14"
 
     static var footer: String {
         "App v\(short)  ·  build \(build)"
