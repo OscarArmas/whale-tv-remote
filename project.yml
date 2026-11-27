@@ -27,17 +27,8 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Whale Remote
-        MARKETING_VERSION: "1.5"
-        CURRENT_PROJECT_VERSION: "6"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         SWIFT_EMIT_LOC_STRINGS: "YES"
-    info:
-      path: WhaleRemote/Info.plist
-      properties:
-        CFBundleDisplayName: Whale Remote
-        NSLocalNetworkUsageDescription: Whale Remote busca el televisor en tu Wi‑Fi para enviarle las teclas del mando. No usa internet ni cuentas.
-        NSHighResolutionCapable: true
-        LSMinimumSystemVersion: "13.0"
     scheme:
       testTargets: []

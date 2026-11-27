@@ -3,184 +3,153 @@ import Darwin
 
 @MainActor
 final class RemoteViewModel: ObservableObject {
-    @Published var devices: [TvDevice] = []
-    @Published var isSearching = false
-    @Published var status = "Tap Search TVs to start"
-    @Published var selected: TvDevice?
-    @Published var lastError: String?
-    @Published var lastLog: String?
-    @Published var lastKey: String?
-    /// Number of HTTP requests in flight. The UI uses this to show the spinner
-    /// and the top loading bar while anything is being sent.
-    @Published var inFlight: Int = 0
+    enum Connection { case disconnected, connecting, connected, failed }
 
+    @Published private(set) var connection = Connection.disconnected
+    @Published private(set) var devices: [TvDevice] = []
+    @Published private(set) var isSearching = false
+    @Published private(set) var selected: TvDevice?
+    @Published private(set) var lastError: String?
+    @Published private(set) var lastKey: String?
+    @Published private(set) var inFlight = 0
+
+    private let discover: () async -> [TvDevice]
+    private let makeRemote: (URL, URL?) -> DlnaRemote
     private var remote: DlnaRemote?
-    private var heartbeatTask: Task<Void, Never>?
-    private var localIP = "0.0.0.0"
+    private var heartbeat: Task<Void, Never>?
+    private var commands: [Task<Void, Never>] = []
+    private var moveTask: Task<Void, Never>?
+    private var pendingX = 0
+    private var pendingY = 0
 
-    // Mouse-move coalescing state (see `move(x:y:)` below).
-    private var pendingMoveX: Int = 0
-    private var pendingMoveY: Int = 0
-    private var moveInFlight: Bool = false
+    init(discover: @escaping () async -> [TvDevice] = { await SsdpClient.search() },
+         makeRemote: @escaping (URL, URL?) -> DlnaRemote = { DlnaRemote(controlURL: $0, renderingURL: $1) }) {
+        self.discover = discover
+        self.makeRemote = makeRemote
+    }
 
-    /// Starts counting one in-flight request (drives the UI spinner).
-    private func startInFlight() { inFlight += 1 }
-    private func endInFlight() { if inFlight > 0 { inFlight -= 1 } }
-
-    var isConnected: Bool { remote != nil && selected != nil }
+    var isConnected: Bool { connection == .connected }
 
     func search() async {
+        guard !isSearching else { return }
         isSearching = true
-        status = "Looking for MediaRenderer devices on the network…"
         lastError = nil
-        let found = await SsdpClient.search()
-        devices = found
-        status = found.isEmpty
-            ? "Nothing found. Make sure the Mac is on the same Wi‑Fi as the TV."
-            : "\(found.count) device(s) found. Pick one and connect."
+        devices = await discover()
         isSearching = false
     }
 
     func connect(_ device: TvDevice) async {
+        disconnect()
         guard let url = device.avTransportControlURL else {
-            lastError = RemoteError.noControlURL.localizedDescription
+            fail(RemoteError.noControlURL)
             return
         }
-        disconnect()
-        selected = device
-        let client = DlnaRemote(controlURL: url, renderingURL: device.renderingControlURL)
+        let client = makeRemote(url, device.renderingControlURL)
+        let ip = Self.guessLocalIPv4(preferringHost: device.host) ?? "0.0.0.0"
         remote = client
-        localIP = Self.guessLocalIPv4(preferringHost: device.host) ?? "0.0.0.0"
-        // The real remote-control port rotates (we've seen 2026 and 1566); show it
-        // so we can tell at a glance whether SSDP picked the right one.
-        let portHint = "channel: \(url.host ?? "?"):\(url.port.map(String.init) ?? "80")"
-        status = "Connected to \(device.name)\n\(portHint)"
-        lastError = nil
-        lastLog = portHint
-        lastKey = nil
-        Task {
+        selected = device
+        connection = .connecting
+        heartbeat = Task { [weak self] in
             do {
-                lastLog = try await client.sendHeartbeat(localIP: localIP)
+                while !Task.isCancelled {
+                    _ = try await client.sendHeartbeat(localIP: ip)
+                    guard !Task.isCancelled, self?.remote === client else { return }
+                    self?.connection = .connected
+                    try await Task.sleep(nanoseconds: 10_000_000_000)
+                }
             } catch {
-                lastError = error.localizedDescription
+                guard !Task.isCancelled, self?.remote === client else { return }
+                self?.fail(error)
             }
         }
-        startHeartbeat()
+    }
+
+    private func fail(_ error: Error) {
+        disconnect()
+        connection = .failed
+        lastError = error.localizedDescription
     }
 
     func disconnect() {
-        heartbeatTask?.cancel()
-        heartbeatTask = nil
+        heartbeat?.cancel()
+        heartbeat = nil
+        commands.forEach { $0.cancel() }
+        commands.removeAll()
+        moveTask?.cancel()
+        moveTask = nil
+        pendingX = 0
+        pendingY = 0
+        inFlight = 0
         remote = nil
         selected = nil
-        status = "Disconnected"
+        lastKey = nil
+        lastError = nil
+        connection = .disconnected
+    }
+
+    // Keep button presses in order, including both halves of a volume change.
+    private func enqueue(label: String, operation: @escaping (DlnaRemote) async throws -> Void) {
+        guard isConnected, let client = remote else { return }
+        let previous = commands.last
+        inFlight += 1
+        commands.append(Task {
+            await previous?.value
+            guard !Task.isCancelled, remote === client else { return }
+            do {
+                try await operation(client)
+                guard !Task.isCancelled, remote === client else { return }
+                lastKey = label
+                lastError = nil
+            } catch {
+                guard !Task.isCancelled, remote === client else { return }
+                lastError = error.localizedDescription
+            }
+            commands.removeFirst()
+            inFlight -= 1
+        })
     }
 
     func press(_ key: String) {
-        guard let remote else { return }
-        lastKey = key
-        startInFlight()
-        Task {
-            defer { Task { @MainActor in self.endInFlight() } }
-            do {
-                switch key {
-                case RemoteKeys.volumeUp:
-                    lastLog = try await remote.volumeUp()
-                case RemoteKeys.volumeDown:
-                    lastLog = try await remote.volumeDown()
-                case RemoteKeys.mute:
-                    lastLog = try await remote.toggleMute()
-                default:
-                    lastLog = try await remote.sendKey(key)
-                }
-                lastError = nil
-            } catch {
-                lastError = error.localizedDescription
+        enqueue(label: key) { client in
+            switch key {
+            case RemoteKeys.volumeUp: _ = try await client.volumeUp()
+            case RemoteKeys.volumeDown: _ = try await client.volumeDown()
+            case RemoteKeys.mute: _ = try await client.toggleMute()
+            default: _ = try await client.sendKey(key)
             }
         }
     }
 
-    /// Sends a text string to the TV's focused input (search bars, logins, etc.).
-    /// Uses the Zeasn `setString` action. When `pressEnter` is true, immediately
-    /// follows up with TR_KEY_ENTER — this is what the official app does.
     func sendText(_ text: String, pressEnter: Bool = true) {
-        guard let remote, !text.isEmpty else { return }
-        lastKey = "txt:\(text)"
-        startInFlight()
-        Task {
-            defer { Task { @MainActor in self.endInFlight() } }
-            do {
-                lastLog = try await remote.sendString(text)
-                if pressEnter {
-                    // Give the TV a beat to apply the text before confirming it.
-                    try? await Task.sleep(nanoseconds: 150_000_000)
-                    _ = try await remote.sendKey(RemoteKeys.enter)
-                }
-                lastError = nil
-            } catch {
-                lastError = error.localizedDescription
+        guard !text.isEmpty else { return }
+        enqueue(label: "Text sent · \(text.count) characters") { client in
+            _ = try await client.sendString(text)
+            if pressEnter {
+                try await Task.sleep(nanoseconds: 150_000_000)
+                _ = try await client.sendKey(RemoteKeys.enter)
             }
         }
     }
 
-    /// Trackpad delta. Coalesces incoming moves so there is at most ONE HTTP
-    /// request to the TV in flight at a time.
-    ///
-    /// Rationale: SwiftUI's DragGesture fires at the display refresh rate
-    /// (~60 Hz). Sending one SOAP request per tick overwhelms the TV: the
-    /// queue grows and the on-screen cursor lags behind the finger by
-    /// hundreds of ms. Instead:
-    ///   1. First delta fires a request immediately.
-    ///   2. While it is flying, subsequent deltas are summed in
-    ///      `pendingMoveX/Y` instead of spawning new requests.
-    ///   3. When the request comes back, if any pending delta accumulated,
-    ///      a single request is sent with the sum, and the loop repeats.
-    ///
-    /// Net effect: mouse feedback is driven by the TV's real response time,
-    /// never by a growing backlog. On a healthy Wi-Fi this looks instant.
     func move(x: Int, y: Int) {
-        guard remote != nil else { return }
-        pendingMoveX += x
-        pendingMoveY += y
-        if !moveInFlight {
-            drainMoveQueue()
-        }
-    }
-
-    private func drainMoveQueue() {
-        guard let remote,
-              pendingMoveX != 0 || pendingMoveY != 0 else {
-            moveInFlight = false
-            return
-        }
-        let dx = pendingMoveX
-        let dy = pendingMoveY
-        pendingMoveX = 0
-        pendingMoveY = 0
-        moveInFlight = true
-        Task { [weak self] in
-            do {
-                _ = try await remote.sendMouseMove(x: dx, y: dy)
-            } catch {
-                await MainActor.run { self?.lastError = error.localizedDescription }
-            }
-            await MainActor.run { self?.drainMoveQueue() }
-        }
-    }
-
-    private func startHeartbeat() {
-        heartbeatTask?.cancel()
-        let ip = localIP
-        heartbeatTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                guard let self, let remote = self.remote else { return }
+        guard isConnected, let client = remote else { return }
+        pendingX += x
+        pendingY += y
+        guard moveTask == nil else { return }
+        moveTask = Task {
+            while !Task.isCancelled, remote === client {
+                let (dx, dy) = (pendingX, pendingY)
+                pendingX = 0
+                pendingY = 0
+                if dx == 0 && dy == 0 { break }
                 do {
-                    _ = try await remote.sendHeartbeat(localIP: ip)
+                    _ = try await client.sendMouseMove(x: dx, y: dy)
                 } catch {
-                    await MainActor.run { self.lastError = "Heartbeat: \(error.localizedDescription)" }
+                    guard !Task.isCancelled, remote === client else { return }
+                    lastError = error.localizedDescription
                 }
             }
+            if !Task.isCancelled, remote === client { moveTask = nil }
         }
     }
 

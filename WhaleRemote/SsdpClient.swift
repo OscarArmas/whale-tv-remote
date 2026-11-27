@@ -77,14 +77,12 @@ enum SsdpClient {
         //    that:
         //      - has AVTransport resolved,
         //      - is NOT on port 1393 (that one answers 200 but silently drops keys).
-        //    If only 1393 shows up, use it as a last resort.
+        //    Skip hosts that only advertised the decoy or lack AVTransport.
         let groups = Dictionary(grouping: fetched, by: { $0.host })
         var picked: [TvDevice] = []
         for (_, group) in groups {
             if let real = group.first(where: { isRealRenderer($0) }) {
                 picked.append(real)
-            } else if let fallback = group.first {
-                picked.append(fallback)
             }
         }
         return picked.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -199,45 +197,45 @@ enum SsdpClient {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-            guard let xml = String(data: data, encoding: .utf8)
-                ?? String(data: data, encoding: .isoLatin1) else { return nil }
-            let name = xmlTag(xml, "friendlyName") ?? stub.name
-            let maker = xmlTag(xml, "manufacturer") ?? stub.manufacturer
-            let base = resolveBaseURL(xml: xml, location: url)
-            let av = serviceBlock(xml, type: "urn:schemas-upnp-org:service:AVTransport:1")
-                .flatMap { xmlTag($0, "controlURL") }
-                .flatMap { resolve(base: base, path: $0) }
-            let rc = serviceBlock(xml, type: "urn:schemas-upnp-org:service:RenderingControl:1")
-                .flatMap { xmlTag($0, "controlURL") }
-                .flatMap { resolve(base: base, path: $0) }
-            return TvDevice(
-                id: stub.id,
-                name: name,
-                host: stub.host,
-                locationURL: url,
-                avTransportControlURL: av,
-                renderingControlURL: rc,
-                manufacturer: maker
-            )
+            return try parseDescriptor(data, stub: stub)
         } catch {
             return nil
         }
     }
 
-    private static func xmlTag(_ xml: String, _ tag: String) -> String? {
-        // UPnP sometimes uses a prefix and attributes: <ns:friendlyName foo="bar">
-        let pattern = "<(?:[\\w]+:)?\(NSRegularExpression.escapedPattern(for: tag))(?:\\s[^>]*)?>([^<]*)</(?:[\\w]+:)?\(NSRegularExpression.escapedPattern(for: tag))>"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
-        let range = NSRange(xml.startIndex..., in: xml)
-        guard let match = regex.firstMatch(in: xml, range: range),
-              let r = Range(match.range(at: 1), in: xml) else { return nil }
-        return String(xml[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+    static func parseDescriptor(_ data: Data, stub: TvDevice) throws -> TvDevice {
+        let url = stub.locationURL
+        let doc = try XMLDocument(data: data, options: .nodeLoadExternalEntitiesNever)
+        func value(_ tag: String) throws -> String? {
+            try doc.nodes(forXPath: "//*[local-name()='\(tag)']").first?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let name = try value("friendlyName") ?? stub.name
+        let maker = try value("manufacturer") ?? stub.manufacturer
+        let base = resolveBaseURL(advertised: try value("URLBase"), location: url)
+        func controlURL(_ service: String) throws -> URL? {
+            let type = "urn:schemas-upnp-org:service:\(service):1"
+            let query = "//*[local-name()='service'][*[local-name()='serviceType' and normalize-space(.)='\(type)']]/*[local-name()='controlURL']"
+            guard let path = try doc.nodes(forXPath: query).first?.stringValue else { return nil }
+            return resolve(base: base, path: path.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        let av = try controlURL("AVTransport")
+        let rc = try controlURL("RenderingControl")
+        return TvDevice(
+            id: stub.id,
+            name: name,
+            host: stub.host,
+            locationURL: url,
+            avTransportControlURL: av,
+            renderingControlURL: rc,
+            manufacturer: maker
+        )
     }
 
     /// Same rule as the Whale TV app: XML `URLBase` if present, else the directory
     /// portion of the LOCATION URL.
-    private static func resolveBaseURL(xml: String, location: URL) -> URL {
-        if let urlBase = xmlTag(xml, "URLBase"), let url = URL(string: urlBase), url.host != nil {
+    private static func resolveBaseURL(advertised: String?, location: URL) -> URL {
+        if let urlBase = advertised, let url = URL(string: urlBase), url.host != nil {
             return url
         }
         var comps = URLComponents(url: location, resolvingAgainstBaseURL: false)
@@ -250,15 +248,6 @@ enum SsdpClient {
             }
         }
         return comps?.url ?? location
-    }
-
-    private static func serviceBlock(_ xml: String, type: String) -> String? {
-        guard let typeRange = xml.range(of: type, options: .caseInsensitive) else { return nil }
-        let before = xml[xml.startIndex..<typeRange.lowerBound]
-        guard let start = before.range(of: "<service", options: [.backwards, .caseInsensitive]) else { return nil }
-        let fromService = xml[start.lowerBound...]
-        guard let end = fromService.range(of: "</service>", options: .caseInsensitive) else { return nil }
-        return String(xml[start.lowerBound..<end.upperBound])
     }
 
     private static func resolve(base: URL, path: String) -> URL? {

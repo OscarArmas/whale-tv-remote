@@ -14,6 +14,7 @@
 		A2000000000000000000000A /* DlnaRemote.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* DlnaRemote.swift */; };
 		A2000000000000000000000C /* RemoteKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* RemoteKeys.swift */; };
 		A2000000000000000000000E /* UpnpHttp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* UpnpHttp.swift */; };
+		A20000000000000000000010 /* AppVersion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* AppVersion.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +26,7 @@
 		A20000000000000000000009 /* DlnaRemote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DlnaRemote.swift; sourceTree = "<group>"; };
 		A2000000000000000000000B /* RemoteKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteKeys.swift; sourceTree = "<group>"; };
 		A2000000000000000000000F /* UpnpHttp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpnpHttp.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 /* AppVersion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppVersion.swift; sourceTree = "<group>"; };
 		A2000000000000000000000D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -65,6 +67,7 @@
 				A20000000000000000000009 /* DlnaRemote.swift */,
 				A2000000000000000000000B /* RemoteKeys.swift */,
 				A2000000000000000000000F /* UpnpHttp.swift */,
+				A20000000000000000000011 /* AppVersion.swift */,
 				A2000000000000000000000D /* Info.plist */,
 			);
 			path = WhaleRemote;
@@ -129,6 +132,7 @@
 				A2000000000000000000000A /* DlnaRemote.swift in Sources */,
 				A2000000000000000000000C /* RemoteKeys.swift in Sources */,
 				A2000000000000000000000E /* UpnpHttp.swift in Sources */,
+				A20000000000000000000010 /* AppVersion.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -175,7 +179,6 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 6;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -186,7 +189,6 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.WhaleRemote;
 				PRODUCT_NAME = "Whale Remote";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -202,7 +204,6 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 6;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -213,7 +214,6 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.WhaleRemote;
 				PRODUCT_NAME = "Whale Remote";
 				SWIFT_EMIT_LOC_STRINGS = YES;
